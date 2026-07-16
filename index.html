@@ -446,10 +446,30 @@
 			return JSON.stringify(valor).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
 		}
 
+		function extrairProvasDiferentes(retornoGAS) {
+			/* O GAS responde [ { "Aluno 1": [Pergunta/Gabarito, ...], ... }, hash ].
+			 * O hash não é uma prova e precisa ser descartado. */
+			const candidatos = Array.isArray(retornoGAS) ? retornoGAS : [retornoGAS];
+			const grupoDeAlunos = candidatos.find(item =>
+				item && typeof item === 'object' && !Array.isArray(item) &&
+				Object.values(item).some(valor => Array.isArray(valor))
+			);
+
+			if (!grupoDeAlunos) throw new Error('O GAS não retornou as provas por aluno.');
+
+			return Object.entries(grupoDeAlunos)
+				.filter(([, questoes]) => Array.isArray(questoes))
+				.map(([aluno, questoes]) => ({ aluno, questoes }));
+		}
+
 		function abaDeImpressao(provasDiferentes) {
-			const lista = Array.isArray(provasDiferentes)
-				? provasDiferentes
-				: (provasDiferentes?.Assuntos ? [provasDiferentes] : Object.values(provasDiferentes || {}));
+			let lista;
+			try {
+				lista = extrairProvasDiferentes(provasDiferentes);
+			} catch (erro) {
+				alert(erro.message || erro);
+				return;
+			}
 			const chave = `provas-diferentes-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 			const urlImpressao = new URL(window.location.href);
 			urlImpressao.searchParams.set('impressaoDiferentes', chave);
@@ -4020,8 +4040,63 @@ if (comBotao) {
 
 				const identificador = document.createElement('div');
 				identificador.className = 'identificador-prova-diferente';
-				identificador.textContent = `PROVA ${String(numero).padStart(2, '0')}`;
+				const numeroDaProva = String(numero).match(/\d+/)?.[0] || numero;
+				identificador.textContent = `PROVA ${String(numeroDaProva).padStart(2, '0')}`;
 				primeiraPagina.appendChild(identificador);
+			}
+
+			function encontrarQuestaoNoBanco(numeroBQ) {
+				for (const questoes of Object.values(BancoQuestoes)) {
+					if (!Array.isArray(questoes)) continue;
+					const encontrada = questoes.find(questao => String(questao.NQuestaoBQ) === String(numeroBQ));
+					if (encontrada) return encontrada;
+				}
+				return null;
+			}
+
+			function aplicarQuestaoDoAluno(destino, questaoDoAluno, indice) {
+				const numeroBQ = destino.querySelector('p[nquestaobq]')?.getAttribute('nquestaobq');
+				const questaoOriginal = encontrarQuestaoNoBanco(numeroBQ);
+				if (!questaoOriginal) {
+					throw new Error(`Não encontrei no banco a questão ${numeroBQ || indice + 1} da prova principal.`);
+				}
+
+				/* verQuestao() já contém toda a lógica de transformar o texto do GAS
+				 * em quesitos, V/F, campos NUM e data-gabarito. Reutilizamos a função
+				 * com os metadados originais (imagem, cálculos etc.). */
+				const chaveTemporaria = '__impressao_provas_diferentes__';
+				BancoQuestoes[chaveTemporaria] = [{
+					...questaoOriginal,
+					Pergunta: questaoDoAluno.Pergunta,
+					Gabarito: questaoDoAluno.Gabarito
+				}];
+				verQuestao(0, chaveTemporaria);
+
+				const caixaTemporaria = document.createElement('div');
+				caixaTemporaria.innerHTML = document.getElementById('htmlPergunta').innerHTML;
+				const novaQuestao = caixaTemporaria.querySelector('.questao');
+				delete BancoQuestoes[chaveTemporaria];
+				if (!novaQuestao) throw new Error(`Não foi possível renderizar a questão ${indice + 1}.`);
+
+				// Preserva os ajustes manuais de altura da questão e da imagem do modelo.
+				novaQuestao.style.minHeight = destino.style.minHeight;
+				const imagemAnterior = destino.querySelector('.resizer-img');
+				const novaImagem = novaQuestao.querySelector('.resizer-img');
+				if (imagemAnterior && novaImagem) novaImagem.style.height = imagemAnterior.style.height;
+				destino.replaceWith(novaQuestao);
+			}
+
+			function aplicarProvaDoAluno(questoesDoAluno) {
+				const destinos = Array.from(document.querySelectorAll('.page .questao'))
+					.filter(questao => !questao.innerText.includes('ADICIONE A QUESTÃO'));
+				if (destinos.length !== questoesDoAluno.length) {
+					throw new Error(`A prova principal tem ${destinos.length} questões, mas o GAS devolveu ${questoesDoAluno.length}.`);
+				}
+
+				destinos.forEach((destino, indice) => aplicarQuestaoDoAluno(destino, questoesDoAluno[indice], indice));
+				atualizarQuesitos();
+				mostrarGabarito(true);
+				if (window.renderAllMath) renderAllMath();
 			}
 
 			function montarPaginaDeImpressao(pacote) {
@@ -4030,14 +4105,13 @@ if (comBotao) {
 					const paginasProntas = [];
 
 					pacote.provas.forEach((provaRecebida, indice) => {
-						const prova = normalizarProvaDiferente(provaRecebida, pacote.modelo);
-						importar(prova, true, false);
-						atualizarQuesitos();
-						mostrarGabarito(true);
-						if (window.renderAllMath) renderAllMath();
+						// Reconstrói a prova principal, com todos os assuntos, pesos,
+						// imagens e tamanhos, antes de substituir o conteúdo do aluno.
+						importar(pacote.modelo, true, false);
+						aplicarProvaDoAluno(provaRecebida.questoes);
 
 						const paginas = Array.from(document.querySelectorAll('.pageCabecalho, .quebra-manual, .page'));
-						marcarNumeroDaProva(paginas, indice + 1);
+						marcarNumeroDaProva(paginas, provaRecebida.aluno || indice + 1);
 						paginasProntas.push(paginas.map(pagina => pagina.outerHTML).join(''));
 					});
 
