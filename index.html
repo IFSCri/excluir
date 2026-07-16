@@ -4088,7 +4088,8 @@ if (comBotao) {
 
 			function aplicarProvaDoAluno(questoesDoAluno) {
 				const destinos = Array.from(document.querySelectorAll('.page .questao'))
-					.filter(questao => !questao.innerText.includes('ADICIONE A QUESTÃO'));
+					.filter(questao => !questao.innerText.includes('ADICIONE A QUESTÃO'))
+					.filter(questao => !questao.closest("#htmlPergunta"));
 				if (destinos.length !== questoesDoAluno.length) {
 					throw new Error(`A prova principal tem ${destinos.length} questões, mas o GAS devolveu ${questoesDoAluno.length}.`);
 				}
