@@ -994,8 +994,8 @@
 
                   
         const teste = (location.search.slice(1) == "teste"), 
-              back = (teste)?"https://script.google.com/macros/s/AKfycbxBz7h3pmIJll6C_YRgy3wmVz54kuy6cuajYwwSN1PjTSFp4Uo84xiAhT720_XhyMf4/exec":
-                            "https://script.google.com/macros/s/AKfycbxDThRMVCzfJ3OfCsclwMryNiQ5YGHAwxXy5eXYFKOjC4Sk10cKZtFEuLS6ws_xGsctBA/exec";
+             back = /*(teste)?*/"https://script.google.com/macros/s/AKfycbxBz7h3pmIJll6C_YRgy3wmVz54kuy6cuajYwwSN1PjTSFp4Uo84xiAhT720_XhyMf4/exec"/*:
+                            "https://script.google.com/macros/s/AKfycbxDThRMVCzfJ3OfCsclwMryNiQ5YGHAwxXy5eXYFKOjC4Sk10cKZtFEuLS6ws_xGsctBA/exec";*/
                   // Para evitar problemas de cache limpando ele
         const urlComCacheBust = back + '?timestamp=' + new Date().getTime();
           
