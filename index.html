@@ -450,91 +450,32 @@
 			const lista = Array.isArray(provasDiferentes)
 				? provasDiferentes
 				: (provasDiferentes?.Assuntos ? [provasDiferentes] : Object.values(provasDiferentes || {}));
-			const novaJanela = window.open('', 'resultadoBQ');
+			const chave = `provas-diferentes-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			const urlImpressao = new URL(window.location.href);
+			urlImpressao.searchParams.set('impressaoDiferentes', chave);
+			/* A aba nova confirma que terminou de carregar antes de receber os
+			 * dados. Isso evita clonar a interface de edição sobre a impressão. */
+			let novaJanela = null;
+			function entregarDados(evento) {
+				if (evento.origin !== window.location.origin || evento.source !== novaJanela) return;
+				if (evento.data?.tipo !== 'provas-diferentes-pronta' || evento.data.chave !== chave) return;
+
+				window.removeEventListener('message', entregarDados);
+				novaJanela.postMessage({
+					tipo: 'provas-diferentes-dados',
+					chave,
+					provas: lista,
+					banco: BancoQuestoes,
+					modelo: exportar()
+				}, window.location.origin);
+			}
+			window.addEventListener('message', entregarDados);
+			novaJanela = window.open(urlImpressao.href, 'resultadoBQ');
 
 			if (!novaJanela) {
+				window.removeEventListener('message', entregarDados);
 				alert('Não foi possível abrir a aba de impressão. Libere os pop-ups para este site.');
-				return;
 			}
-
-			const htmlBase = document.documentElement.outerHTML;
-			const dados = serializarParaNovaAba(lista);
-			const banco = serializarParaNovaAba(BancoQuestoes);
-			const modelo = serializarParaNovaAba(exportar());
-			const bootstrap = `
-<script>
-(() => {
-  const provasRecebidas = ${dados};
-  const bancoRecebido = ${banco};
-  const modeloRecebido = ${modelo};
-
-  const normalizar = ${normalizarProvaDiferente.toString()};
-
-  function adicionarIdentificador(nos, numero) {
-    const primeiraPagina = nos.find(no => no.classList?.contains('pageCabecalho')) || nos[0];
-    if (!primeiraPagina) return;
-    const identificador = document.createElement('div');
-    identificador.className = 'identificador-prova-diferente';
-    identificador.textContent = 'PROVA ' + String(numero).padStart(2, '0');
-    primeiraPagina.appendChild(identificador);
-  }
-
-  function iniciarImpressaoIndividual() {
-    try {
-      BancoQuestoes = bancoRecebido;
-      const paginasProntas = [];
-
-      provasRecebidas.forEach((provaRecebida, indice) => {
-        const prova = normalizar(provaRecebida, modeloRecebido);
-        importar(prova, true, false);
-        atualizarQuesitos();
-        mostrarGabarito(true); // O gabarito desta cópia precisa mostrar somente suas respostas.
-        if (window.renderAllMath) renderAllMath();
-
-        const nosDaProva = Array.from(document.querySelectorAll('.pageCabecalho, .quebra-manual, .page'));
-        adicionarIdentificador(nosDaProva, indice + 1);
-        paginasProntas.push(nosDaProva.map(no => no.outerHTML).join(''));
-      });
-
-      document.title = 'Provas diferentes - impressão';
-      document.body.innerHTML = '<main id="provas-diferentes-impressao">' +
-        paginasProntas.map((html, indice) =>
-          '<section class="prova-individual' + (indice ? ' nova-prova' : '') + '">' + html + '</section>'
-        ).join('') + '</main>';
-    } catch (erro) {
-      console.error('Erro ao montar as provas diferentes:', erro);
-      document.body.innerHTML = '<p style="margin:2rem;font:16px Arial">Não foi possível montar as provas: ' +
-        String(erro.message || erro).replace(/</g, '&lt;') + '</p>';
-    }
-  }
-
-  // Os scripts da página clonada já foram avaliados quando este bootstrap é executado.
-  iniciarImpressaoIndividual();
-})();
-<\/script>
-<style>
-  .identificador-prova-diferente {
-    position: absolute;
-    top: 8px;
-    right: 10px;
-    z-index: 20;
-    padding: 4px 8px;
-    border: 2px solid #111;
-    background: #fff;
-    color: #111;
-    font: 800 22pt/1 Arial, sans-serif;
-    letter-spacing: 1px;
-  }
-  .pageCabecalho { position: relative; }
-  @media print {
-    .prova-individual.nova-prova { break-before: page; page-break-before: always; }
-    .identificador-prova-diferente { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-  }
-</style>`;
-
-			novaJanela.document.open();
-			novaJanela.document.write(htmlBase.replace('</body>', bootstrap + '</body>'));
-			novaJanela.document.close();
 		}
 
 
@@ -4064,5 +4005,79 @@ if (comBotao) {
 			</div>
 		</div>
 	</div>
+
+	<script>
+		/* Página de impressão das provas diferentes.
+		 * Este bloco só é ativado na aba aberta por abaDeImpressao(). A página
+		 * normal não recebe o parâmetro e continua sem qualquer alteração. */
+		(function prepararImpressaoDeProvasDiferentes() {
+			const chave = new URLSearchParams(window.location.search).get('impressaoDiferentes');
+			if (!chave) return;
+
+			function marcarNumeroDaProva(paginas, numero) {
+				const primeiraPagina = paginas.find(pagina => pagina.classList.contains('pageCabecalho'));
+				if (!primeiraPagina) return;
+
+				const identificador = document.createElement('div');
+				identificador.className = 'identificador-prova-diferente';
+				identificador.textContent = `PROVA ${String(numero).padStart(2, '0')}`;
+				primeiraPagina.appendChild(identificador);
+			}
+
+			function montarPaginaDeImpressao(pacote) {
+				try {
+					BancoQuestoes = pacote.banco;
+					const paginasProntas = [];
+
+					pacote.provas.forEach((provaRecebida, indice) => {
+						const prova = normalizarProvaDiferente(provaRecebida, pacote.modelo);
+						importar(prova, true, false);
+						atualizarQuesitos();
+						mostrarGabarito(true);
+						if (window.renderAllMath) renderAllMath();
+
+						const paginas = Array.from(document.querySelectorAll('.pageCabecalho, .quebra-manual, .page'));
+						marcarNumeroDaProva(paginas, indice + 1);
+						paginasProntas.push(paginas.map(pagina => pagina.outerHTML).join(''));
+					});
+
+					const estilo = document.createElement('style');
+					estilo.textContent = `
+						.identificador-prova-diferente {
+							position: absolute; bottom: 7px; right: 7px; z-index: 20;
+							padding: 3px 7px; border: 2px solid #111; background: #fff;
+							font: 800 20pt/1 Arial, sans-serif; letter-spacing: 1px;
+						}
+						.pageCabecalho { position: relative; }
+						@media print {
+							.prova-individual.nova-prova { break-before: page; page-break-before: always; }
+						}
+					`;
+					document.head.appendChild(estilo);
+
+					/* A edição, login e modais deixam de existir nesta aba: restam
+					 * apenas as páginas já renderizadas para impressão. */
+					document.body.innerHTML = '<main id="provas-diferentes-impressao">' +
+						paginasProntas.map((html, indice) =>
+							`<section class="prova-individual${indice ? ' nova-prova' : ''}">${html}</section>`
+						).join('') + '</main>';
+					document.title = 'Provas diferentes - impressão';
+				} catch (erro) {
+					console.error('Erro ao montar as provas diferentes:', erro);
+					document.body.innerHTML = `<p style="margin:2rem;font:16px Arial">Não foi possível montar as provas: ${String(erro.message || erro).replace(/</g, '&lt;')}</p>`;
+				}
+			}
+
+			window.addEventListener('message', evento => {
+				if (evento.origin !== window.location.origin || evento.data?.tipo !== 'provas-diferentes-dados') return;
+				if (evento.data.chave !== chave) return;
+				montarPaginaDeImpressao(evento.data);
+			}, { once: true });
+
+			if (window.opener) {
+				window.opener.postMessage({ tipo: 'provas-diferentes-pronta', chave }, window.location.origin);
+			}
+		})();
+	</script>
 </body>
 </html>
